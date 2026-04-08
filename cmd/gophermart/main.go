@@ -44,6 +44,7 @@ func main() {
 	// TODO: вынести секрет в конфиг/env
 	authMgr := auth.NewManager("gophermart-secret-key")
 	userHandler := handler.NewUserHandler(store, authMgr, zapLog)
+	orderHandler := handler.NewOrderHandler(store, zapLog)
 
 	r := chi.NewRouter()
 	r.Use(middleware.LoggingMiddleware(zapLog))
@@ -54,7 +55,8 @@ func main() {
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(authMgr))
-		// TODO: добавить защищённые маршруты
+		r.Post("/api/user/orders", orderHandler.CreateOrder)
+		r.Get("/api/user/orders", orderHandler.GetOrders)
 	})
 
 	srv := &http.Server{
