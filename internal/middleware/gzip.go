@@ -25,7 +25,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 		if strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
 			gr, err := gzip.NewReader(r.Body)
 			if err != nil {
-				http.Error(w, "не удалось распаковать запрос", http.StatusBadRequest)
+				http.Error(w, "failed to decompress request", http.StatusBadRequest)
 				return
 			}
 			defer gr.Close()

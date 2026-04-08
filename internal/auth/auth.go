@@ -3,6 +3,7 @@ package auth
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -70,8 +71,8 @@ func (m *Manager) ParseToken(tokenStr string) (int64, error) {
 		return 0, fmt.Errorf("невалидные claims токена")
 	}
 
-	var userID int64
-	if _, err := fmt.Sscanf(claims.Subject, "%d", &userID); err != nil {
+	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil {
 		return 0, fmt.Errorf("невалидный subject токена: %w", err)
 	}
 

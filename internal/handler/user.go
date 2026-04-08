@@ -71,7 +71,9 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setAuthToken(w, user.ID)
+	if err := h.setAuthToken(w, user.ID); err != nil {
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -104,16 +106,19 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setAuthToken(w, user.ID)
+	if err := h.setAuthToken(w, user.ID); err != nil {
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *UserHandler) setAuthToken(w http.ResponseWriter, userID int64) {
+func (h *UserHandler) setAuthToken(w http.ResponseWriter, userID int64) error {
 	token, err := h.auth.GenerateToken(userID)
 	if err != nil {
 		h.log.Error("генерация токена", zap.Error(err))
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return err
 	}
 	w.Header().Set("Authorization", "Bearer "+token)
+	return nil
 }
