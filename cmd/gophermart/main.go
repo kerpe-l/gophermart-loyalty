@@ -12,7 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
+	"github.com/kerpe-l/gophermart-loyalty/internal/auth"
 	"github.com/kerpe-l/gophermart-loyalty/internal/config"
+	"github.com/kerpe-l/gophermart-loyalty/internal/handler"
 	"github.com/kerpe-l/gophermart-loyalty/internal/logger"
 	"github.com/kerpe-l/gophermart-loyalty/internal/middleware"
 	"github.com/kerpe-l/gophermart-loyalty/internal/storage/postgres"
@@ -39,9 +41,21 @@ func main() {
 	}
 	defer store.Close()
 
+	// TODO: вынести секрет в конфиг/env
+	authMgr := auth.NewManager("gophermart-secret-key")
+	userHandler := handler.NewUserHandler(store, authMgr, zapLog)
+
 	r := chi.NewRouter()
 	r.Use(middleware.LoggingMiddleware(zapLog))
 	r.Use(middleware.GzipMiddleware)
+
+	r.Post("/api/user/register", userHandler.Register)
+	r.Post("/api/user/login", userHandler.Login)
+
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware(authMgr))
+		// TODO: добавить защищённые маршруты
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.RunAddress,
