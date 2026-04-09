@@ -45,6 +45,7 @@ func main() {
 	authMgr := auth.NewManager("gophermart-secret-key")
 	userHandler := handler.NewUserHandler(store, authMgr, zapLog)
 	orderHandler := handler.NewOrderHandler(store, zapLog)
+	balanceHandler := handler.NewBalanceHandler(store, zapLog)
 
 	r := chi.NewRouter()
 	r.Use(middleware.LoggingMiddleware(zapLog))
@@ -57,6 +58,9 @@ func main() {
 		r.Use(middleware.AuthMiddleware(authMgr))
 		r.Post("/api/user/orders", orderHandler.CreateOrder)
 		r.Get("/api/user/orders", orderHandler.GetOrders)
+		r.Get("/api/user/balance", balanceHandler.GetBalance)
+		r.Post("/api/user/balance/withdraw", balanceHandler.Withdraw)
+		r.Get("/api/user/withdrawals", balanceHandler.GetWithdrawals)
 	})
 
 	srv := &http.Server{
