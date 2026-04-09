@@ -11,30 +11,28 @@ import (
 // GetBalance возвращает текущий баланс пользователя.
 // Баланс рассчитывается динамически: сумма начислений − сумма списаний.
 func (s *Storage) GetBalance(ctx context.Context, userID int64) (*model.Balance, error) {
-	var bal model.Balance
-
+	var accrued int64
 	err := s.pool.QueryRow(ctx,
-		`SELECT
-			COALESCE(SUM(o.accrual), 0),
-			COALESCE(w.total, 0)
-		 FROM orders o
-		 LEFT JOIN (
-			SELECT user_id, SUM(amount) AS total
-			FROM withdrawals
-			WHERE user_id = $1
-			GROUP BY user_id
-		 ) w ON w.user_id = o.user_id
-		 WHERE o.user_id = $1`,
+		`SELECT COALESCE(SUM(accrual), 0) FROM orders WHERE user_id = $1`,
 		userID,
-	).Scan(&bal.Current, &bal.Withdrawn)
-
+	).Scan(&accrued)
 	if err != nil {
-		// Если у пользователя нет ни заказов, ни списаний — вернём нулевой баланс.
-		return &model.Balance{}, nil
+		return nil, fmt.Errorf("подсчёт начислений: %w", err)
 	}
 
-	bal.Current -= bal.Withdrawn
-	return &bal, nil
+	var withdrawn int64
+	err = s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE user_id = $1`,
+		userID,
+	).Scan(&withdrawn)
+	if err != nil {
+		return nil, fmt.Errorf("подсчёт списаний: %w", err)
+	}
+
+	return &model.Balance{
+		Current:   accrued - withdrawn,
+		Withdrawn: withdrawn,
+	}, nil
 }
 
 // CreateWithdrawal списывает баллы со счёта пользователя.
@@ -50,13 +48,28 @@ func (s *Storage) CreateWithdrawal(ctx context.Context, userID int64, orderNumbe
 		_ = tx.Rollback(ctx) // nolint: после Commit Rollback — no-op
 	}()
 
-	// Считаем баланс внутри транзакции с блокировкой строк заказов.
+	// Блокируем строки заказов пользователя, чтобы параллельные списания
+	// не могли одновременно прочитать один и тот же баланс.
+	_, err = tx.Exec(ctx,
+		`SELECT id FROM orders WHERE user_id = $1 FOR UPDATE`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("блокировка заказов: %w", err)
+	}
+
+	_, err = tx.Exec(ctx,
+		`SELECT id FROM withdrawals WHERE user_id = $1 FOR UPDATE`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("блокировка списаний: %w", err)
+	}
+
+	// Теперь безопасно считаем баланс — строки заблокированы.
 	var accrued int64
 	err = tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(accrual), 0)
-		 FROM orders
-		 WHERE user_id = $1
-		 FOR UPDATE`,
+		`SELECT COALESCE(SUM(accrual), 0) FROM orders WHERE user_id = $1`,
 		userID,
 	).Scan(&accrued)
 	if err != nil {
@@ -65,10 +78,7 @@ func (s *Storage) CreateWithdrawal(ctx context.Context, userID int64, orderNumbe
 
 	var withdrawn int64
 	err = tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(amount), 0)
-		 FROM withdrawals
-		 WHERE user_id = $1
-		 FOR UPDATE`,
+		`SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE user_id = $1`,
 		userID,
 	).Scan(&withdrawn)
 	if err != nil {
