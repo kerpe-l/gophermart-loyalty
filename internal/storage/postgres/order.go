@@ -56,6 +56,56 @@ func (s *Storage) orderConflictError(ctx context.Context, number string, userID 
 	return apperrors.ErrOrderOwnedByAnother
 }
 
+// GetPendingOrders возвращает заказы со статусом NEW или PROCESSING.
+func (s *Storage) GetPendingOrders(ctx context.Context) ([]model.Order, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, number, status, accrual, uploaded_at
+		 FROM orders
+		 WHERE status IN ($1, $2)
+		 ORDER BY uploaded_at ASC`,
+		model.OrderStatusNew, model.OrderStatusProcessing,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("получение незавершённых заказов: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []model.Order
+	for rows.Next() {
+		var o model.Order
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Number, &o.Status, &o.Accrual, &o.UploadedAt); err != nil {
+			return nil, fmt.Errorf("сканирование заказа: %w", err)
+		}
+		orders = append(orders, o)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("итерация заказов: %w", err)
+	}
+
+	return orders, nil
+}
+
+// UpdateOrderStatus атомарно обновляет статус и начисление заказа.
+// WHERE status NOT IN (INVALID, PROCESSED) защищает от двойного начисления.
+func (s *Storage) UpdateOrderStatus(ctx context.Context, number string, status model.OrderStatus, accrual int64) error {
+	res, err := s.pool.Exec(ctx,
+		`UPDATE orders
+		 SET status = $1, accrual = $2
+		 WHERE number = $3 AND status NOT IN ($4, $5)`,
+		status, accrual, number, model.OrderStatusInvalid, model.OrderStatusProcessed,
+	)
+	if err != nil {
+		return fmt.Errorf("обновление статуса заказа: %w", err)
+	}
+
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("заказ %s уже в финальном статусе", number)
+	}
+
+	return nil
+}
+
 // GetOrdersByUserID возвращает заказы пользователя, отсортированные от новых к старым.
 func (s *Storage) GetOrdersByUserID(ctx context.Context, userID int64) ([]model.Order, error) {
 	rows, err := s.pool.Query(ctx,

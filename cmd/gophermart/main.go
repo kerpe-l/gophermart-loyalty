@@ -11,7 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
+	"github.com/kerpe-l/gophermart-loyalty/internal/accrual"
 	"github.com/kerpe-l/gophermart-loyalty/internal/auth"
 	"github.com/kerpe-l/gophermart-loyalty/internal/config"
 	"github.com/kerpe-l/gophermart-loyalty/internal/handler"
@@ -69,21 +71,37 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	go func() {
+	accrualClient := accrual.NewClient(cfg.AccrualSystemAddress)
+	poller := accrual.NewPoller(accrualClient, store, zapLog)
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
 		zapLog.Info("сервер запускается", zap.String("addr", cfg.RunAddress))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			zapLog.Fatal("ошибка сервера", zap.Error(err))
+			return err
 		}
-	}()
+		return nil
+	})
 
-	<-ctx.Done()
-	zapLog.Info("получен сигнал завершения, останавливаю сервер...")
+	g.Go(func() error {
+		zapLog.Info("accrual-поллер запущен",
+			zap.String("accrual_addr", cfg.AccrualSystemAddress))
+		return poller.Run(gCtx)
+	})
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	g.Go(func() error {
+		<-gCtx.Done()
+		zapLog.Info("получен сигнал завершения, останавливаю сервер...")
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		zapLog.Error("ошибка при остановке сервера", zap.Error(err))
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		return srv.Shutdown(shutdownCtx)
+	})
+
+	if err := g.Wait(); err != nil {
+		zapLog.Error("завершение с ошибкой", zap.Error(err))
 	}
 
 	zapLog.Info("сервер остановлен")
