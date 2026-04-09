@@ -19,19 +19,19 @@ func AuthMiddleware(authMgr *auth.Manager) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if header == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
 			}
 
 			tokenStr := strings.TrimPrefix(header, "Bearer ")
 			if tokenStr == header {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
 			}
 
 			userID, err := authMgr.ParseToken(tokenStr)
 			if err != nil {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
 			}
 

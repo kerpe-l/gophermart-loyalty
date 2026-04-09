@@ -46,14 +46,14 @@ type balanceResponse struct {
 func (h *BalanceHandler) GetBalance(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	bal, err := h.store.GetBalance(r.Context(), userID)
 	if err != nil {
 		h.log.Error("получение баланса", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -78,23 +78,23 @@ type withdrawRequest struct {
 func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	var req withdrawRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	if req.Order == "" || req.Sum <= 0 {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	if !luhn.Valid(req.Order) {
-		http.Error(w, "invalid order number", http.StatusUnprocessableEntity)
+		http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -104,11 +104,11 @@ func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 	err := h.store.CreateWithdrawal(r.Context(), userID, req.Order, amount)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrInsufficientFunds) {
-			http.Error(w, "insufficient funds", http.StatusPaymentRequired)
+			http.Error(w, http.StatusText(http.StatusPaymentRequired), http.StatusPaymentRequired)
 			return
 		}
 		h.log.Error("списание баллов", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -126,14 +126,14 @@ type withdrawalResponse struct {
 func (h *BalanceHandler) GetWithdrawals(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	wds, err := h.store.GetWithdrawalsByUserID(r.Context(), userID)
 	if err != nil {
 		h.log.Error("получение списаний", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 

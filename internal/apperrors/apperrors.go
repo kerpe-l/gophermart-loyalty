@@ -8,12 +8,12 @@ import (
 
 // Sentinel-ошибки бизнес-логики.
 var (
-	ErrUserExists          = errors.New("пользователь с таким логином уже существует")
-	ErrInvalidCredentials  = errors.New("неверная пара логин/пароль")
-	ErrOrderAlreadyOwned   = errors.New("заказ уже загружен этим пользователем")
-	ErrOrderOwnedByAnother = errors.New("заказ загружен другим пользователем")
-	ErrInsufficientFunds   = errors.New("недостаточно средств")
-	ErrInvalidOrderNumber  = errors.New("неверный формат номера заказа")
+	ErrUserExists          = errors.New("user with this login already exists")
+	ErrInvalidCredentials  = errors.New("invalid login/password pair")
+	ErrOrderAlreadyOwned   = errors.New("order already uploaded by this user")
+	ErrOrderOwnedByAnother = errors.New("order uploaded by another user")
+	ErrInsufficientFunds   = errors.New("insufficient funds")
+	ErrInvalidOrderNumber  = errors.New("invalid order number format")
 )
 
 // HTTPStatus возвращает HTTP-статус, соответствующий доменной ошибке.

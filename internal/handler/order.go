@@ -40,24 +40,24 @@ func NewOrderHandler(store OrderStore, log *zap.Logger) *OrderHandler {
 func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	number := strings.TrimSpace(string(body))
 	if number == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	if !luhn.Valid(number) {
-		http.Error(w, "invalid order number", http.StatusUnprocessableEntity)
+		http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -68,11 +68,11 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, apperrors.ErrOrderOwnedByAnother) {
-			http.Error(w, "order already uploaded by another user", http.StatusConflict)
+			http.Error(w, http.StatusText(http.StatusConflict), http.StatusConflict)
 			return
 		}
 		h.log.Error("создание заказа", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -91,14 +91,14 @@ type orderResponse struct {
 func (h *OrderHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	orders, err := h.store.GetOrdersByUserID(r.Context(), userID)
 	if err != nil {
 		h.log.Error("получение заказов", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 

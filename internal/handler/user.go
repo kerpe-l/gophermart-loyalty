@@ -44,7 +44,7 @@ type credentials struct {
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var creds credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
@@ -56,18 +56,18 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	hash, err := h.auth.HashPassword(creds.Password)
 	if err != nil {
 		h.log.Error("хеширование пароля", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	user, err := h.store.CreateUser(r.Context(), creds.Login, hash)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrUserExists) {
-			http.Error(w, "login already taken", apperrors.HTTPStatus(err))
+			http.Error(w, http.StatusText(http.StatusConflict), apperrors.HTTPStatus(err))
 			return
 		}
 		h.log.Error("создание пользователя", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -81,7 +81,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var creds credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
@@ -93,16 +93,16 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.store.GetUserByLogin(r.Context(), creds.Login)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrInvalidCredentials) {
-			http.Error(w, "invalid credentials", apperrors.HTTPStatus(err))
+			http.Error(w, http.StatusText(http.StatusUnauthorized), apperrors.HTTPStatus(err))
 			return
 		}
 		h.log.Error("получение пользователя", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.auth.ComparePassword(user.Password, creds.Password); err != nil {
-		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *UserHandler) setAuthToken(w http.ResponseWriter, userID int64) error {
 	token, err := h.auth.GenerateToken(userID)
 	if err != nil {
 		h.log.Error("генерация токена", zap.Error(err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return err
 	}
 	w.Header().Set("Authorization", "Bearer "+token)
