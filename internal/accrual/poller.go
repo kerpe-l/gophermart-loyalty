@@ -24,9 +24,10 @@ type OrderStore interface {
 
 // Poller периодически опрашивает accrual-сервис и обновляет статусы заказов.
 type Poller struct {
-	client *Client
-	store  OrderStore
-	log    *zap.Logger
+	client            *Client
+	store             OrderStore
+	log               *zap.Logger
+	consecutiveErrors int
 }
 
 // NewPoller создаёт поллер.
@@ -50,56 +51,51 @@ func (p *Poller) Run(ctx context.Context) error {
 			p.log.Info("поллер остановлен")
 			return nil
 		case <-ticker.C:
-			p.poll(ctx, ticker)
+			next := p.poll(ctx)
+			ticker.Reset(next)
 		}
 	}
 }
 
-// poll выполняет один цикл опроса всех незавершённых заказов.
-func (p *Poller) poll(ctx context.Context, ticker *time.Ticker) {
+// poll проходит по незавершённым заказам и возвращает интервал до
+// следующего тика. При 429 возвращает Retry-After, при сетевой/5xx ошибке - backoff.
+// цикл прерывается на первой же ошибке, чтобы не добивать недоступный accrual оставшимися заказами.
+func (p *Poller) poll(ctx context.Context) time.Duration {
 	orders, err := p.store.GetPendingOrders(ctx)
 	if err != nil {
 		p.log.Error("получение незавершённых заказов", zap.Error(err))
-		return
+		return defaultPollInterval
 	}
-
-	consecutiveErrors := 0
 
 	for _, order := range orders {
 		if ctx.Err() != nil {
-			return
+			return defaultPollInterval
 		}
 
 		err := p.processOrder(ctx, order)
-		if err != nil {
-			var tooMany *ErrTooManyRequests
-			if errors.As(err, &tooMany) {
-				p.log.Warn("accrual: rate limit, ожидаем",
-					zap.Duration("retry_after", tooMany.RetryAfter))
-				ticker.Reset(tooMany.RetryAfter)
-				return
-			}
-
-			consecutiveErrors++
-			backoff := calcBackoff(consecutiveErrors)
-			p.log.Error("обработка заказа в accrual",
-				zap.String("order", order.Number),
-				zap.Error(err),
-				zap.Duration("backoff", backoff))
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff):
-			}
+		if err == nil {
 			continue
 		}
 
-		consecutiveErrors = 0
+		var tooMany *ErrTooManyRequests
+		if errors.As(err, &tooMany) {
+			p.log.Warn("accrual: rate limit, ожидаем",
+				zap.Duration("retry_after", tooMany.RetryAfter))
+			return tooMany.RetryAfter
+		}
+
+		p.consecutiveErrors++
+		backoff := calcBackoff(p.consecutiveErrors)
+		p.log.Error("обработка заказа в accrual",
+			zap.String("order", order.Number),
+			zap.Error(err),
+			zap.Duration("backoff", backoff))
+		return backoff
 	}
 
-	// Восстанавливаем нормальный интервал после успешного цикла.
-	ticker.Reset(defaultPollInterval)
+	// Полный проход без ошибок (или пустой список) — считаем accrual здоровым.
+	p.consecutiveErrors = 0
+	return defaultPollInterval
 }
 
 // processOrder запрашивает accrual и обновляет статус одного заказа.

@@ -127,6 +127,50 @@ func TestPollerHandles429(t *testing.T) {
 	}
 }
 
+func TestPollerBackoffPersistsAndResets(t *testing.T) {
+	t.Parallel()
+
+	var failing atomic.Bool
+	failing.Store(true)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if failing.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"order":"12345678903","status":"PROCESSED","accrual":1.0}`))
+	}))
+	defer srv.Close()
+
+	store := &mockOrderStore{
+		getPendingFn: func(_ context.Context) ([]model.Order, error) {
+			return []model.Order{{Number: "12345678903", Status: model.OrderStatusNew}}, nil
+		},
+		updateStatusFn: func(_ context.Context, _ string, _ model.OrderStatus, _ int64) error {
+			return nil
+		},
+	}
+
+	client := NewClient(srv.URL)
+	poller := NewPoller(client, store, zap.NewNop())
+
+	ctx := context.Background()
+
+	first := poller.poll(ctx)
+	second := poller.poll(ctx)
+	if first >= second {
+		t.Errorf("backoff должен расти между вызовами: first=%v, second=%v", first, second)
+	}
+
+	failing.Store(false)
+	third := poller.poll(ctx)
+	if third != defaultPollInterval {
+		t.Errorf("после успешного цикла должен вернуться defaultPollInterval, got %v", third)
+	}
+}
+
 func TestMapAccrualStatus(t *testing.T) {
 	t.Parallel()
 
