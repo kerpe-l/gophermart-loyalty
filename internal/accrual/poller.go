@@ -115,6 +115,11 @@ func (p *Poller) processOrder(ctx context.Context, order model.Order) error {
 		accrualKopecks = int64(math.Round(*result.Accrual * 100))
 	}
 
+	// Если ничего не поменялось — не дёргаем БД.
+	if newStatus == order.Status && accrualKopecks == order.Accrual {
+		return nil
+	}
+
 	if err := p.store.UpdateOrderStatus(ctx, order.Number, newStatus, accrualKopecks); err != nil {
 		p.log.Error("обновление статуса заказа",
 			zap.String("order", order.Number),

@@ -127,6 +127,40 @@ func TestPollerHandles429(t *testing.T) {
 	}
 }
 
+func TestPollerSkipsUpdateWhenStatusUnchanged(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"order":"12345678903","status":"REGISTERED"}`))
+	}))
+	defer srv.Close()
+
+	var updateCalls atomic.Int32
+
+	store := &mockOrderStore{
+		getPendingFn: func(_ context.Context) ([]model.Order, error) {
+			return []model.Order{{Number: "12345678903", Status: model.OrderStatusNew}}, nil
+		},
+		updateStatusFn: func(_ context.Context, _ string, _ model.OrderStatus, _ int64) error {
+			updateCalls.Add(1)
+			return nil
+		},
+	}
+
+	client := NewClient(srv.URL)
+	poller := NewPoller(client, store, zap.NewNop())
+
+	if next := poller.poll(context.Background()); next != defaultPollInterval {
+		t.Errorf("poll должен вернуть defaultPollInterval на штатном ответе, got %v", next)
+	}
+
+	if n := updateCalls.Load(); n != 0 {
+		t.Errorf("UpdateOrderStatus не должен вызываться для REGISTERED → NEW, вызван %d раз", n)
+	}
+}
+
 func TestPollerBackoffPersistsAndResets(t *testing.T) {
 	t.Parallel()
 
