@@ -36,8 +36,7 @@ func (s *Storage) GetBalance(ctx context.Context, userID int64) (*model.Balance,
 }
 
 // CreateWithdrawal списывает баллы со счёта пользователя.
-// Выполняется в транзакции с блокировкой FOR UPDATE для защиты от гонки
-// параллельных списаний.
+// Сериализует параллельные списания одного пользователя через pg_advisory_xact_lock.
 func (s *Storage) CreateWithdrawal(ctx context.Context, userID int64, orderNumber string, amount int64) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -48,25 +47,10 @@ func (s *Storage) CreateWithdrawal(ctx context.Context, userID int64, orderNumbe
 		_ = tx.Rollback(ctx) // nolint: после Commit Rollback — no-op
 	}()
 
-	// Блокируем строки заказов пользователя, чтобы параллельные списания
-	// не могли одновременно прочитать один и тот же баланс.
-	_, err = tx.Exec(ctx,
-		`SELECT id FROM orders WHERE user_id = $1 FOR UPDATE`,
-		userID,
-	)
-	if err != nil {
-		return fmt.Errorf("блокировка заказов: %w", err)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, userID); err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
 	}
 
-	_, err = tx.Exec(ctx,
-		`SELECT id FROM withdrawals WHERE user_id = $1 FOR UPDATE`,
-		userID,
-	)
-	if err != nil {
-		return fmt.Errorf("блокировка списаний: %w", err)
-	}
-
-	// Теперь безопасно считаем баланс — строки заблокированы.
 	var accrued int64
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(accrual), 0) FROM orders WHERE user_id = $1`,
