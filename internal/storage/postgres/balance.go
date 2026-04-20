@@ -102,6 +102,13 @@ func (s *Storage) CreateWithdrawal(ctx context.Context, userID int64, orderNumbe
 	return tx.Commit(ctx)
 }
 
+// scanWithdrawal — сканирование одной строки в model.Withdrawal.
+func scanWithdrawal(rows pgx.Rows) (model.Withdrawal, error) {
+	var w model.Withdrawal
+	err := rows.Scan(&w.ID, &w.UserID, &w.OrderNumber, &w.Amount, &w.ProcessedAt)
+	return w, err
+}
+
 // GetWithdrawalsByUserID возвращает историю списаний, от новых к старым.
 func (s *Storage) GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]model.Withdrawal, error) {
 	rows, err := s.pool.Query(ctx,
@@ -114,20 +121,10 @@ func (s *Storage) GetWithdrawalsByUserID(ctx context.Context, userID int64) ([]m
 	if err != nil {
 		return nil, fmt.Errorf("получение списаний: %w", err)
 	}
-	defer rows.Close()
 
-	var wds []model.Withdrawal
-	for rows.Next() {
-		var w model.Withdrawal
-		if err := rows.Scan(&w.ID, &w.UserID, &w.OrderNumber, &w.Amount, &w.ProcessedAt); err != nil {
-			return nil, fmt.Errorf("сканирование списания: %w", err)
-		}
-		wds = append(wds, w)
+	wds, err := collectRows(scanRows(rows, scanWithdrawal))
+	if err != nil {
+		return nil, fmt.Errorf("чтение списаний: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("итерация списаний: %w", err)
-	}
-
 	return wds, nil
 }

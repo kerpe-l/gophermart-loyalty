@@ -5,11 +5,19 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/kerpe-l/gophermart-loyalty/internal/apperrors"
 	"github.com/kerpe-l/gophermart-loyalty/internal/model"
 )
+
+// scanOrder — сканирование одной строки в model.Order.
+func scanOrder(rows pgx.Rows) (model.Order, error) {
+	var o model.Order
+	err := rows.Scan(&o.ID, &o.UserID, &o.Number, &o.Status, &o.Accrual, &o.UploadedAt)
+	return o, err
+}
 
 // CreateOrder создаёт заказ для пользователя.
 // Если номер уже существует у этого пользователя — возвращает ErrOrderAlreadyOwned.
@@ -68,21 +76,11 @@ func (s *Storage) GetPendingOrders(ctx context.Context) ([]model.Order, error) {
 	if err != nil {
 		return nil, fmt.Errorf("получение незавершённых заказов: %w", err)
 	}
-	defer rows.Close()
 
-	var orders []model.Order
-	for rows.Next() {
-		var o model.Order
-		if err := rows.Scan(&o.ID, &o.UserID, &o.Number, &o.Status, &o.Accrual, &o.UploadedAt); err != nil {
-			return nil, fmt.Errorf("сканирование заказа: %w", err)
-		}
-		orders = append(orders, o)
+	orders, err := collectRows(scanRows(rows, scanOrder))
+	if err != nil {
+		return nil, fmt.Errorf("чтение заказов: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("итерация заказов: %w", err)
-	}
-
 	return orders, nil
 }
 
@@ -118,20 +116,10 @@ func (s *Storage) GetOrdersByUserID(ctx context.Context, userID int64) ([]model.
 	if err != nil {
 		return nil, fmt.Errorf("получение заказов пользователя: %w", err)
 	}
-	defer rows.Close()
 
-	var orders []model.Order
-	for rows.Next() {
-		var o model.Order
-		if err := rows.Scan(&o.ID, &o.UserID, &o.Number, &o.Status, &o.Accrual, &o.UploadedAt); err != nil {
-			return nil, fmt.Errorf("сканирование заказа: %w", err)
-		}
-		orders = append(orders, o)
+	orders, err := collectRows(scanRows(rows, scanOrder))
+	if err != nil {
+		return nil, fmt.Errorf("чтение заказов пользователя: %w", err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("итерация заказов: %w", err)
-	}
-
 	return orders, nil
 }
