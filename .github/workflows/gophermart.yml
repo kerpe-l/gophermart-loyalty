@@ -51,6 +51,8 @@ jobs:
           (cd cmd/accrual && chmod +x accrual_linux_amd64)
 
       - name: Test
+        env:
+          JWT_SECRET: ci-autotest-secret-32-bytes-long!
         run: |
           gophermarttest \
             -test.v -test.run=^TestGophermart$ \
