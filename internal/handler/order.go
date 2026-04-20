@@ -80,11 +80,13 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 // orderResponse — JSON-представление заказа для API.
+// Accrual — указатель, чтобы omitzero пропускал поле, только когда начисления нет (nil).
+// Для заказов с начислением 0 (например, INVALID) поле всё равно попадёт в ответ как 0.
 type orderResponse struct {
-	Number     string  `json:"number"`
-	Status     string  `json:"status"`
-	Accrual    float64 `json:"accrual,omitempty"`
-	UploadedAt string  `json:"uploaded_at"`
+	Number     string   `json:"number"`
+	Status     string   `json:"status"`
+	Accrual    *float64 `json:"accrual,omitzero"`
+	UploadedAt string   `json:"uploaded_at"`
 }
 
 // GetOrders обрабатывает GET /api/user/orders.
@@ -115,7 +117,8 @@ func (h *OrderHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 			UploadedAt: o.UploadedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 		if o.Accrual > 0 {
-			resp[i].Accrual = float64(o.Accrual) / 100
+			accrual := float64(o.Accrual) / 100
+			resp[i].Accrual = &accrual
 		}
 	}
 

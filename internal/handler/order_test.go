@@ -188,9 +188,15 @@ func TestGetOrders(t *testing.T) {
 				if len(resp) != tc.wantLen {
 					t.Errorf("len = %d, want %d", len(resp), tc.wantLen)
 				}
-				// Проверяем конвертацию accrual из копеек в рубли.
-				if resp[0].Accrual != 500 {
-					t.Errorf("accrual = %v, want 500", resp[0].Accrual)
+				// У первого заказа есть начисление: проверяем конвертацию копейки → рубли.
+				if resp[0].Accrual == nil {
+					t.Errorf("accrual у первого заказа не должен быть nil")
+				} else if *resp[0].Accrual != 500 {
+					t.Errorf("accrual = %v, want 500", *resp[0].Accrual)
+				}
+				// У второго заказа начисления нет: поле должно отсутствовать (nil).
+				if resp[1].Accrual != nil {
+					t.Errorf("accrual у второго заказа должен быть nil, got %v", *resp[1].Accrual)
 				}
 			}
 		})
