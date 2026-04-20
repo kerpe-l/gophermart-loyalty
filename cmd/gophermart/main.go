@@ -23,8 +23,6 @@ import (
 )
 
 func main() {
-	cfg := config.New()
-
 	zapLog, err := logger.New("info")
 	if err != nil {
 		log.Fatal("инициализация логгера: ", err)
@@ -33,6 +31,11 @@ func main() {
 		// Игнорируем ошибку Sync — stderr часто не syncable.
 		_ = zapLog.Sync()
 	}()
+
+	cfg, err := config.New()
+	if err != nil {
+		zapLog.Fatal("конфиг", zap.Error(err))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -43,8 +46,7 @@ func main() {
 	}
 	defer store.Close()
 
-	// TODO: вынести секрет в конфиг/env
-	authMgr := auth.NewManager("gophermart-secret-key")
+	authMgr := auth.NewManager(cfg.JWTSecret)
 	userHandler := handler.NewUserHandler(store, authMgr, zapLog)
 	orderHandler := handler.NewOrderHandler(store, zapLog)
 	balanceHandler := handler.NewBalanceHandler(store, zapLog)
