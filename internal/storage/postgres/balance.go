@@ -4,15 +4,28 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/kerpe-l/gophermart-loyalty/internal/apperrors"
 	"github.com/kerpe-l/gophermart-loyalty/internal/model"
 )
 
 // GetBalance возвращает текущий баланс пользователя.
-// Баланс рассчитывается динамически: сумма начислений − сумма списаний.
+// Оба SELECT SUM выполняются в одной REPEATABLE READ транзакции, чтобы параллельный CreateWithdrawal не дал разъехаться accrued и withdrawn.
 func (s *Storage) GetBalance(ctx context.Context, userID int64) (*model.Balance, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("начало транзакции: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
 	var accrued int64
-	err := s.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(accrual), 0) FROM orders WHERE user_id = $1`,
 		userID,
 	).Scan(&accrued)
@@ -21,12 +34,16 @@ func (s *Storage) GetBalance(ctx context.Context, userID int64) (*model.Balance,
 	}
 
 	var withdrawn int64
-	err = s.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE user_id = $1`,
 		userID,
 	).Scan(&withdrawn)
 	if err != nil {
 		return nil, fmt.Errorf("подсчёт списаний: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("коммит транзакции баланса: %w", err)
 	}
 
 	return &model.Balance{
@@ -44,7 +61,7 @@ func (s *Storage) CreateWithdrawal(ctx context.Context, userID int64, orderNumbe
 	}
 	defer func() {
 		// Откатываем, если коммит не был вызван.
-		_ = tx.Rollback(ctx) // nolint: после Commit Rollback — no-op
+		_ = tx.Rollback(ctx)
 	}()
 
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, userID); err != nil {
