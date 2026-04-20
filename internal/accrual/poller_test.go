@@ -2,6 +2,7 @@ package accrual
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -202,6 +203,42 @@ func TestPollerBackoffPersistsAndResets(t *testing.T) {
 	third := poller.poll(ctx)
 	if third != defaultPollInterval {
 		t.Errorf("после успешного цикла должен вернуться defaultPollInterval, got %v", third)
+	}
+}
+
+func TestPollerBackoffOnUpdateError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"order":"12345678903","status":"PROCESSED","accrual":1.0}`))
+	}))
+	defer srv.Close()
+
+	store := &mockOrderStore{
+		getPendingFn: func(_ context.Context) ([]model.Order, error) {
+			return []model.Order{{Number: "12345678903", Status: model.OrderStatusNew}}, nil
+		},
+		updateStatusFn: func(_ context.Context, _ string, _ model.OrderStatus, _ int64) error {
+			return errors.New("imitation: БД недоступна")
+		},
+	}
+
+	client := NewClient(srv.URL)
+	poller := NewPoller(client, store, zap.NewNop())
+
+	first := poller.poll(context.Background())
+	if poller.consecutiveErrors != 1 {
+		t.Errorf("consecutiveErrors после первой ошибки = %d, want 1", poller.consecutiveErrors)
+	}
+
+	second := poller.poll(context.Background())
+	if second <= first {
+		t.Errorf("backoff должен расти: first=%v, second=%v", first, second)
+	}
+	if poller.consecutiveErrors != 2 {
+		t.Errorf("consecutiveErrors после второй ошибки = %d, want 2", poller.consecutiveErrors)
 	}
 }
 

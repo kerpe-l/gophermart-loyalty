@@ -3,6 +3,7 @@ package accrual
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -121,9 +122,7 @@ func (p *Poller) processOrder(ctx context.Context, order model.Order) error {
 	}
 
 	if err := p.store.UpdateOrderStatus(ctx, order.Number, newStatus, accrualKopecks); err != nil {
-		p.log.Error("обновление статуса заказа",
-			zap.String("order", order.Number),
-			zap.Error(err))
+		return fmt.Errorf("обновление статуса заказа %s: %w", order.Number, err)
 	}
 
 	return nil
