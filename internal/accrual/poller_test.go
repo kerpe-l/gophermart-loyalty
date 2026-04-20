@@ -3,16 +3,42 @@ package accrual
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/kerpe-l/gophermart-loyalty/internal/model"
 )
+
+// roundTripFunc — in-memory http.RoundTripper. Нужен для synctest-тестов.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// newStubClient — Client, в котором HTTP идёт через rt без реальной сети.
+func newStubClient(rt http.RoundTripper) *Client {
+	return &Client{
+		baseURL:    "http://stub",
+		httpClient: &http.Client{Transport: rt, Timeout: 10 * time.Second},
+	}
+}
+
+// jsonResponse — хелпер для http.Response.
+func jsonResponse(status int, body string) *http.Response {
+	resp := &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	return resp
+}
 
 // mockOrderStore — мок хранилища для тестов поллера.
 type mockOrderStore struct {
@@ -29,103 +55,104 @@ func (m *mockOrderStore) UpdateOrderStatus(ctx context.Context, number string, s
 }
 
 func TestPollerProcessesOrders(t *testing.T) {
-	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		var updated atomic.Int32
 
-	var updated atomic.Int32
+		rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusOK,
+				`{"order":"12345678903","status":"PROCESSED","accrual":100.50}`), nil
+		})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"order":"12345678903","status":"PROCESSED","accrual":100.50}`))
-	}))
-	defer srv.Close()
-
-	store := &mockOrderStore{
-		getPendingFn: func(_ context.Context) ([]model.Order, error) {
-			if updated.Load() > 0 {
-				return nil, nil // после первого обновления — пусто
-			}
-			return []model.Order{
-				{Number: "12345678903", Status: model.OrderStatusNew},
-			}, nil
-		},
-		updateStatusFn: func(_ context.Context, number string, status model.OrderStatus, accrualVal int64) error {
-			if number != "12345678903" {
-				t.Errorf("number = %q, want 12345678903", number)
-			}
-			if status != model.OrderStatusProcessed {
-				t.Errorf("status = %q, want PROCESSED", status)
-			}
-			if accrualVal != 10050 {
-				t.Errorf("accrual = %d, want 10050", accrualVal)
-			}
-			updated.Add(1)
-			return nil
-		},
-	}
-
-	client := NewClient(srv.URL)
-	poller := NewPoller(client, store, zap.NewNop())
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	go func() {
-		// Ждём обновления и отменяем контекст.
-		for updated.Load() == 0 {
-			time.Sleep(50 * time.Millisecond)
+		store := &mockOrderStore{
+			getPendingFn: func(_ context.Context) ([]model.Order, error) {
+				if updated.Load() > 0 {
+					return nil, nil // после первого обновления — пусто
+				}
+				return []model.Order{{Number: "12345678903", Status: model.OrderStatusNew}}, nil
+			},
+			updateStatusFn: func(_ context.Context, number string, status model.OrderStatus, accrualVal int64) error {
+				if number != "12345678903" {
+					t.Errorf("number = %q, want 12345678903", number)
+				}
+				if status != model.OrderStatusProcessed {
+					t.Errorf("status = %q, want PROCESSED", status)
+				}
+				if accrualVal != 10050 {
+					t.Errorf("accrual = %d, want 10050", accrualVal)
+				}
+				updated.Add(1)
+				return nil
+			},
 		}
+
+		poller := NewPoller(newStubClient(rt), store, zap.NewNop())
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan error, 1)
+		go func() {
+			done <- poller.Run(ctx)
+		}()
+
+		// Виртуальный sleep.
+		time.Sleep(defaultPollInterval + time.Second)
+		synctest.Wait()
+
+		if updated.Load() == 0 {
+			t.Error("заказ не был обновлён")
+		}
+
 		cancel()
-	}()
-
-	err := poller.Run(ctx)
-	if err != nil {
-		t.Fatalf("Run вернул ошибку: %v", err)
-	}
-
-	if updated.Load() == 0 {
-		t.Error("заказ не был обновлён")
-	}
+		if err := <-done; err != nil {
+			t.Fatalf("Run вернул ошибку: %v", err)
+		}
+	})
 }
 
 func TestPollerHandles429(t *testing.T) {
-	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		var requestCount atomic.Int32
 
-	var requestCount atomic.Int32
+		rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			requestCount.Add(1)
+			resp := &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Retry-After": []string{"1"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+			}
+			return resp, nil
+		})
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount.Add(1)
-		w.Header().Set("Retry-After", "1")
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
+		store := &mockOrderStore{
+			getPendingFn: func(_ context.Context) ([]model.Order, error) {
+				return []model.Order{{Number: "12345678903", Status: model.OrderStatusNew}}, nil
+			},
+			updateStatusFn: func(_ context.Context, _ string, _ model.OrderStatus, _ int64) error {
+				return nil
+			},
+		}
 
-	store := &mockOrderStore{
-		getPendingFn: func(_ context.Context) ([]model.Order, error) {
-			return []model.Order{
-				{Number: "12345678903", Status: model.OrderStatusNew},
-			}, nil
-		},
-		updateStatusFn: func(_ context.Context, _ string, _ model.OrderStatus, _ int64) error {
-			return nil
-		},
-	}
+		poller := NewPoller(newStubClient(rt), store, zap.NewNop())
 
-	client := NewClient(srv.URL)
-	poller := NewPoller(client, store, zap.NewNop())
+		ctx, cancel := context.WithCancel(context.Background())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			done <- poller.Run(ctx)
+		}()
 
-	err := poller.Run(ctx)
-	if err != nil {
-		t.Fatalf("Run вернул ошибку: %v", err)
-	}
+		// Виртуальный sleep.
+		time.Sleep(3 * time.Second)
 
-	// При 429 поллер не должен долбить сервис.
-	if cnt := requestCount.Load(); cnt > 5 {
-		t.Errorf("слишком много запросов при 429: %d", cnt)
-	}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run вернул ошибку: %v", err)
+		}
+
+		if cnt := requestCount.Load(); cnt > 5 {
+			t.Errorf("слишком много запросов при 429: %d", cnt)
+		}
+	})
 }
 
 func TestPollerSkipsUpdateWhenStatusUnchanged(t *testing.T) {
