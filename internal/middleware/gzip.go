@@ -42,6 +42,9 @@ func GzipMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
 				r.Body = gr
 			}
 
+			// Vary: Accept-Encoding — ответ зависит от этого заголовка запроса.
+			w.Header().Add("Vary", "Accept-Encoding")
+
 			// Сжатие ответа, если клиент поддерживает.
 			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				next.ServeHTTP(w, r)
