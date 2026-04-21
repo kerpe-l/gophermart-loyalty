@@ -53,7 +53,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(middleware.LoggingMiddleware(zapLog))
-	r.Use(middleware.GzipMiddleware)
+	r.Use(middleware.GzipMiddleware(zapLog))
 
 	r.Post("/api/user/register", userHandler.Register)
 	r.Post("/api/user/login", userHandler.Login)

@@ -77,7 +77,9 @@ func (c *Client) GetOrderAccrual(ctx context.Context, orderNumber string) (*Orde
 	if err != nil {
 		return nil, fmt.Errorf("выполнение запроса к accrual: %w", err)
 	}
-	defer resp.Body.Close()
+	// Ошибка Close после полного чтения ответа не actionable для клиента —
+	// тело уже обработано, соединение будет переиспользовано или сброшено пулом.
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
