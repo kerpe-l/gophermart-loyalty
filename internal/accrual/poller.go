@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"time"
 
@@ -18,8 +19,10 @@ const (
 )
 
 // OrderStore — интерфейс хранилища, необходимый поллеру (consumer-side).
+// GetPendingOrders возвращает стрим: поллер прерывает обход на первой же
+// 429/сетевой ошибке, и pgx закрывает cursor в Postgres, не дочитывая остаток.
 type OrderStore interface {
-	GetPendingOrders(ctx context.Context) ([]model.Order, error)
+	GetPendingOrders(ctx context.Context) iter.Seq2[model.Order, error]
 	UpdateOrderStatus(ctx context.Context, number string, status model.OrderStatus, accrual int64) error
 }
 
@@ -62,24 +65,22 @@ func (p *Poller) Run(ctx context.Context) error {
 // следующего тика. При 429 возвращает Retry-After, при сетевой/5xx ошибке - backoff.
 // цикл прерывается на первой же ошибке, чтобы не добивать недоступный accrual оставшимися заказами.
 func (p *Poller) poll(ctx context.Context) time.Duration {
-	orders, err := p.store.GetPendingOrders(ctx)
-	if err != nil {
-		p.log.Error("получение незавершённых заказов", zap.Error(err))
-		return defaultPollInterval
-	}
-
-	for _, order := range orders {
+	for order, err := range p.store.GetPendingOrders(ctx) {
+		if err != nil {
+			p.log.Error("получение незавершённых заказов", zap.Error(err))
+			return defaultPollInterval
+		}
 		if ctx.Err() != nil {
 			return defaultPollInterval
 		}
 
-		err := p.processOrder(ctx, order)
-		if err == nil {
+		procErr := p.processOrder(ctx, order)
+		if procErr == nil {
 			continue
 		}
 
 		var tooMany *ErrTooManyRequests
-		if errors.As(err, &tooMany) {
+		if errors.As(procErr, &tooMany) {
 			p.log.Warn("accrual: rate limit, ожидаем",
 				zap.Duration("retry_after", tooMany.RetryAfter))
 			return tooMany.RetryAfter
@@ -89,7 +90,7 @@ func (p *Poller) poll(ctx context.Context) time.Duration {
 		backoff := calcBackoff(p.consecutiveErrors)
 		p.log.Error("обработка заказа в accrual",
 			zap.String("order", order.Number),
-			zap.Error(err),
+			zap.Error(procErr),
 			zap.Duration("backoff", backoff))
 		return backoff
 	}

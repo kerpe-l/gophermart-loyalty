@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -64,24 +65,27 @@ func (s *Storage) orderConflictError(ctx context.Context, number string, userID 
 	return apperrors.ErrOrderOwnedByAnother
 }
 
-// GetPendingOrders возвращает заказы со статусом NEW или PROCESSING.
-func (s *Storage) GetPendingOrders(ctx context.Context) ([]model.Order, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, user_id, number, status, accrual, uploaded_at
-		 FROM orders
-		 WHERE status IN ($1, $2)
-		 ORDER BY uploaded_at ASC`,
-		model.OrderStatusNew, model.OrderStatusProcessing,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("получение незавершённых заказов: %w", err)
-	}
+// GetPendingOrders возвращает заказы со статусом NEW или PROCESSING как стримящий итератор.
+func (s *Storage) GetPendingOrders(ctx context.Context) iter.Seq2[model.Order, error] {
+	return func(yield func(model.Order, error) bool) {
+		rows, err := s.pool.Query(ctx,
+			`SELECT id, user_id, number, status, accrual, uploaded_at
+			 FROM orders
+			 WHERE status IN ($1, $2)
+			 ORDER BY uploaded_at ASC`,
+			model.OrderStatusNew, model.OrderStatusProcessing,
+		)
+		if err != nil {
+			yield(model.Order{}, fmt.Errorf("получение незавершённых заказов: %w", err))
+			return
+		}
 
-	orders, err := collectRows(scanRows(rows, scanOrder))
-	if err != nil {
-		return nil, fmt.Errorf("чтение заказов: %w", err)
+		for v, err := range scanRows(rows, scanOrder) {
+			if !yield(v, err) {
+				return
+			}
+		}
 	}
-	return orders, nil
 }
 
 // UpdateOrderStatus атомарно обновляет статус и начисление заказа.

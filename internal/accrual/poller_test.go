@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -46,8 +47,19 @@ type mockOrderStore struct {
 	updateStatusFn func(ctx context.Context, number string, status model.OrderStatus, accrual int64) error
 }
 
-func (m *mockOrderStore) GetPendingOrders(ctx context.Context) ([]model.Order, error) {
-	return m.getPendingFn(ctx)
+func (m *mockOrderStore) GetPendingOrders(ctx context.Context) iter.Seq2[model.Order, error] {
+	return func(yield func(model.Order, error) bool) {
+		orders, err := m.getPendingFn(ctx)
+		if err != nil {
+			yield(model.Order{}, err)
+			return
+		}
+		for _, o := range orders {
+			if !yield(o, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (m *mockOrderStore) UpdateOrderStatus(ctx context.Context, number string, status model.OrderStatus, accrual int64) error {
