@@ -1,6 +1,10 @@
 package luhn
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestValid(t *testing.T) {
 	t.Parallel()
@@ -33,6 +37,19 @@ func TestValid(t *testing.T) {
 			got := Valid(tc.number)
 			if got != tc.want {
 				t.Errorf("Valid(%q) = %v, want %v", tc.number, got, tc.want)
+			}
+		})
+	}
+}
+
+// BenchmarkValid измеряет стоимость Valid на валидных номерах разной длины.
+func BenchmarkValid(b *testing.B) {
+	for _, n := range []int{10, 16, 19} {
+		// Строка из нулей проходит Луна (сумма 0) и гоняет полный проход цикла.
+		number := strings.Repeat("0", n)
+		b.Run(fmt.Sprintf("len=%d", n), func(b *testing.B) {
+			for b.Loop() {
+				Valid(number)
 			}
 		})
 	}
